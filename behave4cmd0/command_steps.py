@@ -13,6 +13,8 @@ from __future__ import absolute_import, print_function
 from behave import given, when, then, step, matchers
 from behave4cmd0 import command_shell, command_util, pathutil, textutil
 from behave4cmd0.pathutil import posixpath_normpath
+from behave4cmd0.command_shell_proc import \
+    TextProcessor, BehaveWinCommandOutputProcessor
 import contextlib
 import difflib
 import os
@@ -24,6 +26,10 @@ from hamcrest import assert_that, equal_to, is_not, contains_string
 # -----------------------------------------------------------------------------
 matchers.register_type(int=int)
 DEBUG = False
+file_contents_normalizer = None
+if BehaveWinCommandOutputProcessor.enabled:
+    file_contents_normalizer = TextProcessor(BehaveWinCommandOutputProcessor())
+
 
 # -----------------------------------------------------------------------------
 # UTILITIES:
@@ -77,12 +83,13 @@ def on_error_print_details(actual, expected):
 # -----------------------------------------------------------------------------
 @given(u'a new working directory')
 def step_a_new_working_directory(context):
-    """
-    Creates a new, empty working directory
-    """
+    """Creates a new, empty working directory."""
     command_util.ensure_context_attribute_exists(context, "workdir", None)
+    # MAYBE: command_util.ensure_workdir_not_exists(context)
     command_util.ensure_workdir_exists(context)
+    # OOPS:
     shutil.rmtree(context.workdir, ignore_errors=True)
+    command_util.ensure_workdir_exists(context)
 
 @given(u'I use the current directory as working directory')
 def step_use_curdir_as_working_directory(context):
@@ -133,6 +140,7 @@ def step_an_empty_file_named_filename(context, filename):
 # STEPS: Run commands
 # -----------------------------------------------------------------------------
 @when(u'I run "{command}"')
+@when(u'I run `{command}`')
 def step_i_run_command(context, command):
     """
     Run a command as subprocess, collect its output and returncode.
@@ -145,6 +153,7 @@ def step_i_run_command(context, command):
         print(u"run_command.output {0}".format(context.command_result.output))
 
 @when(u'I successfully run "{command}"')
+@when(u'I successfully run `{command}`')
 def step_i_successfully_run_command(context, command):
     step_i_run_command(context, command)
     step_it_should_pass(context)
@@ -249,6 +258,26 @@ def step_command_output_should_not_contain_text(context, text):
         textutil.assert_normtext_should_not_contain(actual_output, expected_text)
 
 
+@then(u'the command output should contain "{text}" {count:d} times')
+def step_command_output_should_contain_text_multiple_times(context, text, count):
+    '''
+    EXAMPLE:
+        ...
+        Then the command output should contain "TEXT" 3 times
+    '''
+    assert count >= 0
+    expected_text = text
+    if "{__WORKDIR__}" in expected_text or "{__CWD__}" in expected_text:
+        expected_text = textutil.template_substitute(text,
+             __WORKDIR__ = posixpath_normpath(context.workdir),
+             __CWD__     = posixpath_normpath(os.getcwd())
+        )
+    actual_output = context.command_result.output
+    with on_assert_failed_print_details(actual_output, expected_text):
+        textutil.assert_normtext_should_contain_multiple_times(actual_output,
+                                                               expected_text,
+                                                               count)
+
 @then(u'the command output should contain exactly "{text}"')
 def step_command_output_should_contain_exactly_text(context, text):
     """
@@ -313,6 +342,21 @@ def step_command_output_should_not_contain(context):
     assert context.text is not None, "REQUIRE: multi-line text"
     step_command_output_should_not_contain_text(context, context.text.strip())
 
+@then(u'the command output should contain {count:d} times')
+def step_command_output_should_contain_multiple_times(context, count):
+    '''
+    EXAMPLE:
+        ...
+        when I run "behave ..."
+        then it should pass
+        and  the command output should contain 2 times:
+            """
+            TEXT
+            """
+    '''
+    assert context.text is not None, "REQUIRE: multi-line text"
+    step_command_output_should_contain_text_multiple_times(context,
+                                                           context.text, count)
 
 @then(u'the command output should contain exactly')
 def step_command_output_should_contain_exactly_with_multiline_text(context):
@@ -440,6 +484,9 @@ def step_file_should_contain_text(context, filename, text):
         )
     file_contents = pathutil.read_file_contents(filename, context=context)
     file_contents = file_contents.rstrip()
+    if file_contents_normalizer:
+        # -- HACK: Inject TextProcessor as text normalizer
+        file_contents = file_contents_normalizer(file_contents)
     with on_assert_failed_print_details(file_contents, expected_text):
         textutil.assert_normtext_should_contain(file_contents, expected_text)
 

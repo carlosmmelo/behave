@@ -2,23 +2,27 @@
 """
 This module provides Runner class to run behave feature files (or model elements).
 """
+
 from __future__ import absolute_import, print_function, with_statement
 import contextlib
 import os.path
 import sys
-import traceback
 import warnings
 import weakref
 import six
-from six import StringIO
-
 from behave import matchers
 from behave.step_registry import setup_step_decorators, registry as the_step_registry
 from behave.formatter._registry import make_formatters
 from behave.configuration import ConfigError
-from behave.log_capture import LoggingCapture
+from behave.capture import CaptureController
 from behave.runner_util import collect_feature_locations, parse_features
 from behave._types import ExceptionUtil
+if six.PY2:
+    # -- USE PYTHON3 BACKPORT: With unicode traceback support.
+    import traceback2 as traceback
+else:
+    import traceback
+
 
 
 class ContextMaskWarning(UserWarning):
@@ -165,7 +169,6 @@ class Context(object):
     def _pop(self):
         self._stack.pop(0)
 
-
     def _use_with_behave_mode(self):
         """Provides a context manager for using the context in BEHAVE mode."""
         return use_context_with_mode(self, Context.BEHAVE)
@@ -213,10 +216,15 @@ class Context(object):
             msg = msg % params
             warnings.warn(msg, ContextMaskWarning, stacklevel=3)
 
-    def _dump(self):
+    def _dump(self, pretty=False, prefix="  "):
         for level, frame in enumerate(self._stack):
-            print("Level %d" % level)
-            print(repr(frame))
+            print("%sLevel %d" % (prefix, level))
+            if pretty:
+                for name in sorted(frame.keys()):
+                    value = frame[name]
+                    print("%s  %-15s = %r" % (prefix, name, value))
+            else:
+                print(prefix + repr(frame))
 
     def __getattr__(self, attr):
         if attr[0] == "_":
@@ -244,7 +252,10 @@ class Context(object):
                 }
                 self._emit_warning(attr, params)
 
-        stack_frame = traceback.extract_stack(limit=2)[0]
+        stack_limit = 2
+        if six.PY2:
+            stack_limit += 1     # Due to traceback2 usage.
+        stack_frame = traceback.extract_stack(limit=stack_limit)[0]
         self._record[attr] = stack_frame
         frame = self._stack[0]
         frame[attr] = value
@@ -297,9 +308,13 @@ class Context(object):
                 if not passed:
                     # -- ISSUE #96: Provide more substep info to diagnose problem.
                     step_line = u"%s %s" % (step.keyword, step.name)
-                    message = "%s SUB-STEP: %s" % (step.status.upper(), step_line)
+                    message = "%s SUB-STEP: %s" % \
+                              (step.status.name.upper(), step_line)
                     if step.error_message:
-                        message += "\nSubstep info: %s" % step.error_message
+                        message += "\nSubstep info: %s\n" % step.error_message
+                        message += u"Traceback (of failed substep):\n"
+                        message += u"".join(traceback.format_tb(step.exc_traceback))
+                    # message += u"\nTraceback (of context.execute_steps()):"
                     assert False, message
 
             # -- FINALLY: Restore original context data for current step.
@@ -416,16 +431,11 @@ class ModelRunner(object):
         self.formatters = []
         self.undefined_steps = []
         self.step_registry = step_registry
+        self.capture_controller = CaptureController(config)
 
         self.context = None
         self.feature = None
         self.hook_failures = 0
-
-        self.stdout_capture = None
-        self.stderr_capture = None
-        self.log_capture = None
-        self.old_stdout = None
-        self.old_stderr = None
 
     # @property
     def _get_aborted(self):
@@ -437,7 +447,7 @@ class ModelRunner(object):
     # @aborted.setter
     def _set_aborted(self, value):
         # pylint: disable=protected-access
-        assert self.context
+        assert self.context, "REQUIRE: context, but context=%r" % self.context
         self.context._set_root_attribute("aborted", bool(value))
 
     aborted = property(_get_aborted, _set_aborted,
@@ -462,75 +472,46 @@ class ModelRunner(object):
                 if "tag" in name:
                     extra = "(tag=%s)" % args[0]
 
-                error_text = ExceptionUtil.describe(e, use_traceback)
-                print(u"HOOK-ERROR in %s%s: %s" % (name, extra, error_text))
+                error_text = ExceptionUtil.describe(e, use_traceback).rstrip()
+                error_message = u"HOOK-ERROR in %s%s: %s" % (name, extra, error_text)
+                print(error_message)
                 self.hook_failures += 1
-                if "step" in name:
-                    step = args[0]
-                    step.hook_failed = True
-                elif "tag" in name:
-                    # -- FEATURE or SCENARIO => Use Feature as collector.
-                    context.feature.hook_failed = True
-                elif "scenario" in name:
-                    scenario = args[0]
-                    scenario.hook_failed = True
-                elif "feature" in name:
-                    feature = args[0]
-                    feature.hook_failed = True
+                if "tag" in name:
+                    # -- SCENARIO or FEATURE
+                    statement = getattr(context, "scenario", context.feature)
                 elif "all" in name:
                     # -- ABORT EXECUTION: For before_all/after_all
                     self.aborted = True
+                    statement = None
+                else:
+                    # -- CASE: feature, scenario, step
+                    statement = args[0]
+
+                if statement:
+                    # -- CASE: feature, scenario, step
+                    statement.hook_failed = True
+                    if statement.error_message:
+                        # -- NOTE: One exception/failure is already stored.
+                        #    Append only error message.
+                        statement.error_message += u"\n"+ error_message
+                    else:
+                        # -- FIRST EXCEPTION/FAILURE:
+                        statement.store_exception_context(e)
+                        statement.error_message = error_message
 
     def setup_capture(self):
         if not self.context:
             self.context = Context(self)
-
-        if self.config.stdout_capture:
-            self.stdout_capture = StringIO()
-            self.context.stdout_capture = self.stdout_capture
-
-        if self.config.stderr_capture:
-            self.stderr_capture = StringIO()
-            self.context.stderr_capture = self.stderr_capture
-
-        if self.config.log_capture:
-            self.log_capture = LoggingCapture(self.config)
-            self.log_capture.inveigle()
-            self.context.log_capture = self.log_capture
+        self.capture_controller.setup_capture(self.context)
 
     def start_capture(self):
-        if self.config.stdout_capture:
-            # -- REPLACE ONLY: In non-capturing mode.
-            if not self.old_stdout:
-                self.old_stdout = sys.stdout
-                sys.stdout = self.stdout_capture
-            assert sys.stdout is self.stdout_capture
-
-        if self.config.stderr_capture:
-            # -- REPLACE ONLY: In non-capturing mode.
-            if not self.old_stderr:
-                self.old_stderr = sys.stderr
-                sys.stderr = self.stderr_capture
-            assert sys.stderr is self.stderr_capture
+        self.capture_controller.start_capture()
 
     def stop_capture(self):
-        if self.config.stdout_capture:
-            # -- RESTORE ONLY: In capturing mode.
-            if self.old_stdout:
-                sys.stdout = self.old_stdout
-                self.old_stdout = None
-            assert sys.stdout is not self.stdout_capture
-
-        if self.config.stderr_capture:
-            # -- RESTORE ONLY: In capturing mode.
-            if self.old_stderr:
-                sys.stderr = self.old_stderr
-                self.old_stderr = None
-            assert sys.stderr is not self.stderr_capture
+        self.capture_controller.stop_capture()
 
     def teardown_capture(self):
-        if self.config.log_capture:
-            self.log_capture.abandon()
+        self.capture_controller.teardown_capture()
 
     def run_model(self, features=None):
         # pylint: disable=too-many-branches
@@ -667,7 +648,7 @@ class Runner(ModelRunner):
                     print('ERROR: Could not find "%s" directory in your '\
                         'specified path "%s"' % (steps_dir, base_dir))
 
-            message = 'No %s directory in "%s"' % (steps_dir, base_dir)
+            message = 'No %s directory in %r' % (steps_dir, base_dir)
             raise ConfigError(message)
 
         base_dir = new_base_dir
@@ -684,7 +665,7 @@ class Runner(ModelRunner):
                 else:
                     print('ERROR: Could not find any "<name>.feature" files '\
                         'in your specified path "%s"' % base_dir)
-            raise ConfigError('No feature files in "%s"' % base_dir)
+            raise ConfigError('No feature files in %r' % base_dir)
 
         self.base_dir = base_dir
         self.path_manager.add(base_dir)
@@ -746,12 +727,10 @@ class Runner(ModelRunner):
     def feature_locations(self):
         return collect_feature_locations(self.config.paths)
 
-
     def run(self):
         with self.path_manager:
             self.setup_paths()
             return self.run_with_paths()
-
 
     def run_with_paths(self):
         self.context = Context(self)
@@ -772,7 +751,3 @@ class Runner(ModelRunner):
         stream_openers = self.config.outputs
         self.formatters = make_formatters(self.config, stream_openers)
         return self.run_model()
-
-
-
-

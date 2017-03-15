@@ -26,6 +26,7 @@ ConfigParser = configparser.ConfigParser
 if six.PY2:
     ConfigParser = configparser.SafeConfigParser
 
+
 # -----------------------------------------------------------------------------
 # CONFIGURATION DATA TYPES:
 # -----------------------------------------------------------------------------
@@ -62,8 +63,6 @@ class LogLevel(object):
 
 class ConfigError(Exception):
     pass
-
-
 
 
 # -----------------------------------------------------------------------------
@@ -445,7 +444,8 @@ def config_filenames():
         paths.append(os.path.join(os.environ["APPDATA"]))
 
     for path in reversed(paths):
-        for filename in reversed(("behave.ini", ".behaverc", "setup.cfg")):
+        for filename in reversed(
+                ("behave.ini", ".behaverc", "setup.cfg", "tox.ini")):
             filename = os.path.join(path, filename)
             if os.path.isfile(filename):
                 yield filename
@@ -465,7 +465,7 @@ def load_configuration(defaults, verbose=False):
 
 def setup_parser():
     # construct the parser
-    #usage = "%(prog)s [options] [ [FILE|DIR|URL][:LINE[:LINE]*] ]+"
+    # usage = "%(prog)s [options] [ [FILE|DIR|URL][:LINE[:LINE]*] ]+"
     usage = "%(prog)s [options] [ [DIR|FILE|FILE:LINE] ]+"
     description = """\
     Run a number of feature tests with behave."""
@@ -487,6 +487,7 @@ def setup_parser():
     parser.add_argument("paths", nargs="*",
                         help="Feature directory, file or file location (FILE:LINE).")
     return parser
+
 
 class Configuration(object):
     """Configuration object for behave and behave runners."""
@@ -622,6 +623,15 @@ class Configuration(object):
             # -- SELECT: Scenario-by-name, build regular expression.
             self.name_re = self.build_name_re(self.name)
 
+        if self.stage is None:  # pylint: disable=access-member-before-definition
+            # -- USE ENVIRONMENT-VARIABLE, if stage is undefined.
+            self.stage = os.environ.get("BEHAVE_STAGE", None)
+        self.setup_stage(self.stage)
+        self.setup_model()
+        self.setup_userdata()
+
+        # -- FINALLY: Setup Reporters and Formatters
+        # NOTE: Reporters and Formatters can now use userdata information.
         if self.junit:
             # Buffer the output (it will be put into Junit report)
             self.stdout_capture = True
@@ -636,12 +646,6 @@ class Configuration(object):
         if unknown_formats:
             parser.error("format=%s is unknown" % ", ".join(unknown_formats))
 
-        if self.stage is None:  # pylint: disable=access-member-before-definition
-            # -- USE ENVIRONMENT-VARIABLE, if stage is undefined.
-            self.stage = os.environ.get("BEHAVE_STAGE", None)
-        self.setup_stage(self.stage)
-        self.setup_model()
-        self.setup_userdata()
 
     def setup_outputs(self, args_outfiles=None):
         if self.outputs:
@@ -683,8 +687,10 @@ class Configuration(object):
         :param names: List of name parts or regular expressions (as text).
         :return: Compiled regular expression to use.
         """
+        # -- NOTE: re.LOCALE is removed in Python 3.6 (deprecated in Python 3.5)
+        # flags = (re.UNICODE | re.LOCALE)
         pattern = u"|".join(names)
-        return re.compile(pattern, flags=(re.UNICODE | re.LOCALE))
+        return re.compile(pattern, flags=re.UNICODE)
 
     def exclude(self, filename):
         if isinstance(filename, FileLocation):

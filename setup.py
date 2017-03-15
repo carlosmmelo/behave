@@ -24,13 +24,16 @@ from setuptools_behave import behave_test
 # -----------------------------------------------------------------------------
 python_version = float("%s.%s" % sys.version_info[:2])
 requirements = ["parse>=1.6.3", "parse_type>=0.3.4", "six>=1.9"]
-py26_extra = ["argparse", "importlib", "ordereddict"]
+py26_extra = ["argparse", "importlib", "ordereddict", "enum34", "traceback2"]
+py27_extra = ["enum34", "traceback2"]
 py33_extra = ["enum34"]
 if python_version < 2.6:
     requirements.append("simplejson")
 if python_version < 2.7:
     requirements.extend(py26_extra)
-if python_version < 3.4:
+if python_version < 3:
+    requirements.extend(py27_extra)
+if python_version >= 3.0 and python_version < 3.4:
     requirements.extend(py33_extra)
 
 BEHAVE = os.path.join(HERE, "behave")
@@ -60,7 +63,7 @@ setup(
     version="1.2.6.dev0",
     description="behave is behaviour-driven development, Python style",
     long_description=description,
-    author="Benno Rice, Richard Jones and Jens Engel",
+    author="Jens Engel, Benno Rice and Richard Jones",
     author_email="behave-users@googlegroups.com",
     url="http://github.com/behave/behave",
     provides = ["behave", "setuptools_behave"],
@@ -84,6 +87,7 @@ setup(
         # -- SUPPORT-WHEELS: Extra packages for Python2.6
         # SEE: https://bitbucket.org/pypa/wheel/ , CHANGES.txt (v0.24.0)
         ':python_version=="2.6"': py26_extra,
+        ':python_version=="2.7"': py27_extra,
         ':python_version=="3.3"': py33_extra,
     },
     # MAYBE-DISABLE: use_2to3
@@ -101,6 +105,7 @@ setup(
         "Programming Language :: Python :: 3.3",
         "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: Jython",
         "Programming Language :: Python :: Implementation :: PyPy",

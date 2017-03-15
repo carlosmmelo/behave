@@ -6,7 +6,6 @@ step definition (as text) with step-functions that implement this step.
 
 from __future__ import absolute_import, print_function, with_statement
 import copy
-import os.path
 import re
 import parse
 import six
@@ -99,17 +98,13 @@ class Match(Replayable):
 
     @staticmethod
     def make_location(step_function):
-        '''
-        Extracts the location information from the step function and builds
-        the location string (schema: "{source_filename}:{line_number}").
+        """Extracts the location information from the step function and
+        builds a FileLocation object with (filename, line_number) info.
 
         :param step_function: Function whose location should be determined.
-        :return: Step function location as string.
-        '''
-        step_function_code = six.get_function_code(step_function)
-        filename = os.path.relpath(step_function_code.co_filename, os.getcwd())
-        line_number = step_function_code.co_firstlineno
-        return FileLocation(filename, line_number)
+        :return: FileLocation object for step function.
+        """
+        return FileLocation.for_function(step_function)
 
 
 class NoMatch(Match):
@@ -283,10 +278,7 @@ def register_type(**kw):
 class RegexMatcher(Matcher):
     def __init__(self, func, string, step_type=None):
         super(RegexMatcher, self).__init__(func, string, step_type)
-        assert not (string.startswith("^") or string.endswith("$")), \
-            "Regular expression should not use begin/end-markers: "+ string
-        expression = "^%s$" % self.string
-        self.regex = re.compile(expression)
+        self.regex = re.compile(self.string)
 
     def check_match(self, step):
         m = self.regex.match(step)
@@ -303,11 +295,46 @@ class RegexMatcher(Matcher):
 
         return args
 
+class SimplifiedRegexMatcher(RegexMatcher):
+    """Simplified regular expression step-matcher that automatically adds
+    start-of-line/end-of-line matcher symbols to string:
+
+    .. code-block:: python
+
+        @when(u'a step passes')     # re.pattern = "^a step passes$"
+        def step_impl(context): pass
+    """
+
+    def __init__(self, func, string, step_type=None):
+        assert not (string.startswith("^") or string.endswith("$")), \
+            "Regular expression should not use begin/end-markers: "+ string
+        expression = "^%s$" % string
+        super(SimplifiedRegexMatcher, self).__init__(func, expression, step_type)
+        self.string = string
+
+
+class CucumberRegexMatcher(RegexMatcher):
+    """Compatible to (old) Cucumber style regular expressions.
+    Text must contain start-of-line/end-of-line matcher symbols to string:
+
+    .. code-block:: python
+
+        @when(u'^a step passes$')   # re.pattern = "^a step passes$"
+        def step_impl(context): pass
+    """
 
 matcher_mapping = {
     "parse": ParseMatcher,
     "cfparse": CFParseMatcher,
-    "re": RegexMatcher,
+    "re": SimplifiedRegexMatcher,
+
+    # -- BACKWARD-COMPATIBLE REGEX MATCHER: Old Cucumber compatible style.
+    # To make it the default step-matcher use the following snippet:
+    #   # -- FILE: features/environment.py
+    #   from behave import use_step_matcher
+    #   def before_all(context):
+    #       use_step_matcher("re0")
+    "re0": CucumberRegexMatcher,
 }
 current_matcher = ParseMatcher      # pylint: disable=invalid-name
 

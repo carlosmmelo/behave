@@ -1,20 +1,24 @@
 language: python
 sudo: false
 python:
-  - "2.6"
+  - "3.6"
   - "2.7"
-  - "3.3"
-  - "3.4"
-  - "3.5.1"
-  - "nightly"
+  - "3.5"
+  - "2.6"
   - "pypy"
+  - "3.7-dev"
+  - "nightly"
+  - "3.4"
+  - "3.3"
 
-# -- AVOID:  python: "3.5" => python 3.5.0
-# Seems to have a problem with unit tests in exception traceback.
-# Behaviour is fixed in python 3.5.1
+# NOW SUPPORTED: "3.5" => python 3.5.2 (>= 3.5.1)
+# NOTE: Python 3.5.0 is broken (for some tests).
+# NOTE: nightly = 3.7-dev
 
+# -- TEST-BALLON: Check if Python 3.6 is actually Python 3.5.1 or newer
 matrix:
   allow_failures:
+    - python: "3.6-dev"
     - python: "nightly"
 
 cache:
@@ -28,10 +32,10 @@ install:
 
 script:
   - python --version
-  - py.test test
-  - behave -f progress --junit --tags=~@xfail features/
-  - behave -f progress --junit --tags=~@xfail tools/test-features/
-  - behave -f progress --junit --tags=~@xfail issue.features/
+  - py.test test tests
+  - behave -f progress --junit features/
+  - behave -f progress --junit tools/test-features/
+  - behave -f progress --junit issue.features/
 
 after_failure:
   - echo "FAILURE DETAILS (from XML reports):"

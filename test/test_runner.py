@@ -3,6 +3,7 @@
 
 from __future__ import absolute_import, print_function, with_statement
 from collections import defaultdict
+from platform import python_implementation
 import os.path
 import sys
 import warnings
@@ -234,6 +235,8 @@ class TestContext(unittest.TestCase):
         assert info.startswith("behave runner"), "%r doesn't start with 'behave runner'" % info
         assert "'thing'" in info, "%r not in %r" % ("'thing'", info)
         filename = __file__.rsplit(".", 1)[0]
+        if python_implementation() == "Jython":
+            filename = filename.replace("$py", ".py")
         assert filename in info, "%r not in %r" % (filename, info)
 
     def test_setting_root_attribute_that_masks_existing_causes_warning(self):
@@ -261,6 +264,8 @@ class TestContext(unittest.TestCase):
         assert info.startswith("behave runner"), "%r doesn't start with 'behave runner'" % info
         assert "'thing'" in info, "%r not in %r" % ("'thing'", info)
         filename = __file__.rsplit(".", 1)[0]
+        if python_implementation() == "Jython":
+            filename = filename.replace("$py", ".py")
         assert filename in info, "%r not in %r" % (filename, info)
 
     def test_context_deletable(self):
@@ -500,8 +505,11 @@ class TestRunner(object):
                 ef.assert_called_with(hooks_path, r.hooks)
 
     def test_run_hook_runs_a_hook_that_exists(self):
-        r = runner.Runner(None)
-        r.config = Mock()
+        config = Mock()
+        r = runner.Runner(config)
+        # XXX r.config = Mock()
+        r.config.stdout_capture = False
+        r.config.stderr_capture = False
         r.config.dry_run = False
         r.hooks["before_lunch"] = hook = Mock()
         args = (runner.Context(Mock()), Mock(), Mock())
@@ -527,8 +535,8 @@ class TestRunner(object):
 
         r.setup_capture()
 
-        assert r.stdout_capture is not None
-        assert isinstance(r.stdout_capture, StringIO)
+        assert r.capture_controller.stdout_capture is not None
+        assert isinstance(r.capture_controller.stdout_capture, StringIO)
 
     def test_setup_capture_does_not_create_stringio_if_not_wanted(self):
         r = runner.Runner(Mock())
@@ -538,9 +546,9 @@ class TestRunner(object):
 
         r.setup_capture()
 
-        assert r.stdout_capture is None
+        assert r.capture_controller.stdout_capture is None
 
-    @patch("behave.runner.LoggingCapture")
+    @patch("behave.capture.LoggingCapture")
     def test_setup_capture_creates_memory_handler_for_logging(self, handler):
         r = runner.Runner(Mock())
         r.config.stdout_capture = False
@@ -549,9 +557,9 @@ class TestRunner(object):
 
         r.setup_capture()
 
-        assert r.log_capture is not None
+        assert r.capture_controller.log_capture is not None
         handler.assert_called_with(r.config)
-        r.log_capture.inveigle.assert_called_with()
+        r.capture_controller.log_capture.inveigle.assert_called_with()
 
     def test_setup_capture_does_not_create_memory_handler_if_not_wanted(self):
         r = runner.Runner(Mock())
@@ -561,7 +569,7 @@ class TestRunner(object):
 
         r.setup_capture()
 
-        assert r.log_capture is None
+        assert r.capture_controller.log_capture is None
 
     def test_start_stop_capture_switcheroos_sys_stdout(self):
         old_stdout = sys.stdout
@@ -575,7 +583,7 @@ class TestRunner(object):
         r.setup_capture()
         r.start_capture()
 
-        eq_(sys.stdout, r.stdout_capture)
+        eq_(sys.stdout, r.capture_controller.stdout_capture)
 
         r.stop_capture()
 
@@ -603,11 +611,11 @@ class TestRunner(object):
         r.config.stdout_capture = False
         r.config.log_capture = True
 
-        r.log_capture = Mock()
+        r.capture_controller.log_capture = Mock()
 
         r.teardown_capture()
 
-        r.log_capture.abandon.assert_called_with()
+        r.capture_controller.log_capture.abandon.assert_called_with()
 
     def test_exec_file(self):
         fn = tempfile.mktemp()

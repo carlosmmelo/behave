@@ -14,7 +14,7 @@ Behave
     :target: https://pypi.python.org/pypi/behave
     :alt: Latest Version
 
-.. image:: https://img.shields.io/pypi/dd/behave.svg
+.. image:: https://img.shields.io/pypi/dm/behave.svg
     :target: https://pypi.python.org/pypi/behave
     :alt: Downloads
 
@@ -108,5 +108,5 @@ More Information
 
 .. _behave documentation: http://pythonhosted.org/behave/
 .. _latest changes: https://github.com/behave/behave/blob/master/CHANGES.rst
-.. _behave.example: https://github.com/jenisys/behave.example
+.. _behave.example: https://github.com/behave/behave.example
 

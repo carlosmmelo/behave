@@ -1,11 +1,10 @@
-from __future__ import absolute_import, with_statement
-from unittest import TestCase
 import os.path
 import sys
 import tempfile
 from nose.tools import *
 from behave import configuration
 from behave.configuration import Configuration, UserData
+from unittest import TestCase
 
 
 # one entry of each kind handled
@@ -30,7 +29,8 @@ answer = 42
 ROOTDIR_PREFIX = ""
 if sys.platform.startswith("win"):
     # -- OR: ROOTDIR_PREFIX = os.path.splitdrive(sys.executable)
-    ROOTDIR_PREFIX = os.environ.get("ROOTDIR_PREFIX", "C:")
+    # NOTE: python2 requires lower-case drive letter.
+    ROOTDIR_PREFIX = os.environ.get("BEHAVE_ROOTDIR_PREFIX", "c:")
 
 class TestConfiguration(object):
 
@@ -64,7 +64,7 @@ class TestConfiguration(object):
         # -- OR: Setup with default, unnamed stage.
         self.ensure_stage_environment_is_not_set()
         assert "BEHAVE_STAGE" not in os.environ
-        config = Configuration()
+        config = Configuration("")
         eq_("steps", config.steps_dir)
         eq_("environment.py", config.environment_file)
 
@@ -82,7 +82,7 @@ class TestConfiguration(object):
 
     def test_settings_with_stage_from_envvar(self):
         os.environ["BEHAVE_STAGE"] = "STAGE2"
-        config = Configuration()
+        config = Configuration("")
         eq_("STAGE2_steps", config.steps_dir)
         eq_("STAGE2_environment.py", config.environment_file)
         del os.environ["BEHAVE_STAGE"]

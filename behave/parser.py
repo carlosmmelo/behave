@@ -1,10 +1,12 @@
 # -*- coding: UTF-8 -*-
 
 from __future__ import absolute_import, with_statement
-import six
 import re
+import sys
+import six
 from behave import model, i18n
 from behave.textutil import text as _text
+
 
 DEFAULT_LANGUAGE = "en"
 
@@ -62,9 +64,9 @@ def parse_tags(text):
 class ParserError(Exception):
     def __init__(self, message, line, filename=None, line_text=None):
         if line:
-            message += " at line %d" % line
+            message += u" at line %d" % line
             if line_text:
-                message += ': "%s"' % line_text.strip()
+                message += u': "%s"' % line_text.strip()
         super(ParserError, self).__init__(message)
         self.line = line
         self.line_text = line_text
@@ -73,7 +75,7 @@ class ParserError(Exception):
     def __str__(self):
         arg0 = _text(self.args[0])
         if self.filename:
-            filename = _text(self.filename)
+            filename = _text(self.filename, sys.getfilesystemencoding())
             return u'Failed to parse "%s": %s' % (filename, arg0)
         else:
             return u"Failed to parse <string>: %s" % arg0
@@ -164,7 +166,7 @@ class Parser(object):
 
     def _build_background_statement(self, keyword, line):
         if self.tags:
-            msg = "Background supports no tags: @%s" % (" @".join(self.tags))
+            msg = u"Background supports no tags: @%s" % (u" @".join(self.tags))
             raise ParserError(msg, self.line, self.filename, line)
         name = line[len(keyword) + 1:].strip()
         statement = model.Background(self.filename, self.line, keyword, name)
@@ -191,15 +193,18 @@ class Parser(object):
 
     def _build_examples(self, keyword, line):
         if not isinstance(self.statement, model.ScenarioOutline):
-            message = "Examples must only appear inside scenario outline"
+            message = u"Examples must only appear inside scenario outline"
             raise ParserError(message, self.line, self.filename, line)
         name = line[len(keyword) + 1:].strip()
         self.examples = model.Examples(self.filename, self.line,
-                                       keyword, name)
+                                       keyword, name, tags=self.tags)
         # pylint: disable=E1103
         #   E1103   Instance of "Background" has no "examples" member
         #           (but some types could not be inferred).
         self.statement.examples.append(self.examples)
+
+        # -- RESET STATE:
+        self.tags = []
 
 
     def diagnose_feature_usage_error(self):
@@ -273,7 +278,7 @@ class Parser(object):
         func = getattr(self, "action_" + self.state, None)
         if func is None:
             line = line.strip()
-            msg = "Parser in unknown state %s;" % self.state
+            msg = u"Parser in unknown state %s;" % self.state
             raise ParserError(msg, self.line, self.filename, line)
         if not func(line):
             line = line.strip()
@@ -297,10 +302,40 @@ class Parser(object):
             return True
         return False
 
-    def subaction_detect_next_scenario(self, line):
+    # def subaction_detect_next_scenario(self, line):
+    #     if line.startswith("@"):
+    #         self.tags.extend(self.parse_tags(line))
+    #         self.state = "next_scenario"
+    #         return True
+    #
+    #     scenario_kwd = self.match_keyword("scenario", line)
+    #     if scenario_kwd:
+    #         self._build_scenario_statement(scenario_kwd, line)
+    #         self.state = "scenario"
+    #         return True
+    #
+    #     scenario_outline_kwd = self.match_keyword("scenario_outline", line)
+    #     if scenario_outline_kwd:
+    #         self._build_scenario_outline_statement(scenario_outline_kwd, line)
+    #         self.state = "scenario"
+    #         return True
+    #
+    #     # -- OTHERWISE:
+    #     return False
+
+    # pylint: disable=invalid-name
+    def subaction_detect_taggable_statement(self, line):
+        """Subaction is used after first tag line is detected.
+        Additional lines with tags or taggable_statement follow.
+
+        Taggable statements (excluding Feature) are:
+        * Scenario
+        * ScenarioOutline
+        * Examples (within ScenarioOutline)
+        """
         if line.startswith("@"):
             self.tags.extend(self.parse_tags(line))
-            self.state = "next_scenario"
+            self.state = "taggable_statement"
             return True
 
         scenario_kwd = self.match_keyword("scenario", line)
@@ -315,12 +350,21 @@ class Parser(object):
             self.state = "scenario"
             return True
 
+        examples_kwd = self.match_keyword("examples", line)
+        if examples_kwd:
+            self._build_examples(examples_kwd, line)
+            self.state = "table"
+            return True
+
         # -- OTHERWISE:
         return False
+    # pylint: enable=invalid-name
 
     def action_feature(self, line):
         line = line.strip()
-        if self.subaction_detect_next_scenario(line):
+        # OLD: if self.subaction_detect_next_scenario(line):
+        if self.subaction_detect_taggable_statement(line):
+            # -- DETECTED: Next Scenario, ScenarioOutline (or tags)
             return True
 
         background_kwd = self.match_keyword("background", line)
@@ -332,12 +376,28 @@ class Parser(object):
         self.feature.description.append(line)
         return True
 
-    def action_next_scenario(self, line):
-        """
-        Entered after first tag for Scenario/ScenarioOutline is detected.
+    # def action_next_scenario(self, line):
+    #     """
+    #     Entered after first tag for Scenario/ScenarioOutline is detected.
+    #     """
+    #     line = line.strip()
+    #     if self.subaction_detect_next_scenario(line):
+    #         return True
+    #
+    #     return False
+
+    def action_taggable_statement(self, line):
+        """Entered after first tag for Scenario/ScenarioOutline or
+        Examples is detected (= taggable_statement except Feature).
+
+        Taggable statements (excluding Feature) are:
+          * Scenario
+          * ScenarioOutline
+          * Examples (within ScenarioOutline)
         """
         line = line.strip()
-        if self.subaction_detect_next_scenario(line):
+        if self.subaction_detect_taggable_statement(line):
+            # -- DETECTED: Next Scenario, ScenarioOutline or Examples (or tags)
             return True
 
         return False
@@ -362,7 +422,9 @@ class Parser(object):
         # -- CASE: Detect next Scenario/ScenarioOutline
         #   * Scenario with scenario description, but without steps.
         #   * Title-only scenario without scenario description and steps.
-        if self.subaction_detect_next_scenario(line):
+        # OLD: if self.subaction_detect_next_scenario(line):
+        if self.subaction_detect_taggable_statement(line):
+            # -- DETECTED: Next Scenario, ScenarioOutline (or tags)
             return True
 
         # -- OTHERWISE: Add scenario description line.
@@ -382,7 +444,7 @@ class Parser(object):
           * examples for a ScenarioOutline, after ScenarioOutline steps
 
         DETECT:
-          * next Scenario/ScenarioOutline
+          * next Scenario/ScenarioOutline or Examples (in a ScenarioOutline)
         """
         # pylint: disable=R0911
         #   R0911   Too many return statements (8/6)
@@ -400,13 +462,8 @@ class Parser(object):
             self.statement.steps.append(step)
             return True
 
-        if self.subaction_detect_next_scenario(line):
-            return True
-
-        examples_kwd = self.match_keyword("examples", line)
-        if examples_kwd:
-            self._build_examples(examples_kwd, line)
-            self.state = "table"
+        if self.subaction_detect_taggable_statement(line):
+            # -- DETECTED: Next Scenario, ScenarioOutline or Examples (or tags)
             return True
 
         if line.startswith("|"):
@@ -432,8 +489,8 @@ class Parser(object):
         # -- BETTER DIAGNOSTICS: May remove non-whitespace in execute_steps()
         removed_line_prefix = line[:self.multiline_leading]
         if removed_line_prefix.strip():
-            message = "BAD-INDENT in multiline text: "
-            message += "Line '%s' would strip leading '%s'" % \
+            message = u"BAD-INDENT in multiline text: "
+            message += u"Line '%s' would strip leading '%s'" % \
                         (line, removed_line_prefix)
             raise ParserError(message, self.line, self.filename)
         return True
@@ -462,7 +519,7 @@ class Parser(object):
             self.table = model.Table(cells, self.line)
         else:
             if len(cells) != len(self.table.headings):
-                raise ParserError("Malformed table", self.line)
+                raise ParserError(u"Malformed table", self.line)
             self.table.add_row(cells, self.line)
         return True
 
@@ -485,7 +542,7 @@ class Parser(object):
           * End-of-line comment is stripped.
 
         :param line:   Line with one/more tags to process.
-        :raise ParseError: If syntax error is detected.
+        :raise ParserError: If syntax error is detected.
         """
         assert line.startswith("@")
         tags = []
@@ -496,7 +553,7 @@ class Parser(object):
                 break   # -- COMMENT: Skip rest of line.
             else:
                 # -- BAD-TAG: Abort here.
-                raise ParserError("tag: %s (line: %s)" % (word, line),
+                raise ParserError(u"tag: %s (line: %s)" % (word, line),
                                   self.line, self.filename)
         return tags
 
@@ -518,7 +575,7 @@ class Parser(object):
                 name = line[len(kw):].strip()
                 if step_type in ("and", "but"):
                     if not self.last_step:
-                        raise ParserError("No previous step", self.line)
+                        raise ParserError(u"No previous step", self.line)
                     step_type = self.last_step
                 else:
                     self.last_step = step_type
@@ -556,4 +613,3 @@ class Parser(object):
             self.action_table("")
         steps = self.statement.steps
         return steps
-

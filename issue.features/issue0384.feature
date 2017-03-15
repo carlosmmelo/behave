@@ -22,7 +22,7 @@ Feature: Issue #384 -- Active Tags fail with ScenarioOutline
         """
       And a file named "features/environment.py" with:
         """
-        from behave.tag_matcher import ActiveTagMatcher
+        from behave.tag_matcher import ActiveTagMatcher, setup_active_tag_values
         import sys
 
         # -- ACTIVE TAG SUPPORT: @use.with_{category}={value}, ...
@@ -32,14 +32,8 @@ Feature: Issue #384 -- Active Tags fail with ScenarioOutline
         }
         active_tag_matcher = ActiveTagMatcher(active_tag_value_provider)
 
-        def setup_active_tag_values_from_userdata(userdata):
-            for name in active_tag_value_provider.keys():
-                if name in userdata:
-                    value = userdata[name]
-                    active_tag_value_provider[name] = value
-
         def before_all(context):
-            setup_active_tag_values_from_userdata(context.config.userdata)
+            setup_active_tag_values(active_tag_value_provider, context.config.userdata)
 
         def before_scenario(context, scenario):
             if active_tag_matcher.should_exclude_with(scenario.effective_tags):
@@ -105,18 +99,5 @@ Feature: Issue #384 -- Active Tags fail with ScenarioOutline
       And the command output should contain:
         """
         ACTIVE-TAG DISABLED: Scenario Alice -- Anna, German -- @1.1
-        @use.with_browser=chrome
-        Scenario Outline: Alice -- Anna, German -- @1.1   # features/outline.active_tags.feature:10
-
-        ACTIVE-TAG DISABLED: Scenario Alice -- Arabella, English -- @1.2
-        @use.with_browser=chrome
-        Scenario Outline: Alice -- Arabella, English -- @1.2   # features/outline.active_tags.feature:11
-        """
-      And the command output should contain:
-        """
-        ACTIVE-TAG DISABLED: Scenario Alice -- Anna, German -- @1.1
-        """
-      And the command output should contain:
-        """
         ACTIVE-TAG DISABLED: Scenario Alice -- Arabella, English -- @1.2
         """
